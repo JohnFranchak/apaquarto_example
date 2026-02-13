@@ -1,0 +1,11 @@
+\begin{figure*}[hbt]
+\ifnextchar[{\eatarg}{}
+[!htbp]
+
+{\caption{{Figure title}{\label{fig-metrics}}}}
+
+\pandocbounded{\includegraphics[keepaspectratio]{manuscript_files/figure-pdf/fig-metrics-1.pdf}}
+
+Figure~note
+
+\end{figure*}

@@ -1,0 +1,918 @@
+---
+title: "Natural Statistics of Infants' Everyday Motor Experiences Relate to Sitting and Walking Development"
+blank-lines-above-title: 2
+shorttitle: "Natural Statistics of Movement"
+fig-dpi: 300
+execute: 
+  echo: false
+  warning: false
+  error: false
+  cache: false
+author:
+  - name: John M. Franchak
+    corresponding: true
+    orcid: 0000-0002-0751-2864
+    email: franchak@ucr.edu
+    affiliations:
+      - id: id1
+        name: University of California, Riverside
+        department: Department of Psychology
+  - name: Hailey N. Rousey
+    affiliations:
+      - id: id1
+        name: University of California, Riverside
+        department: Department of Psychology     
+  - name: Hanzhi Wang
+    affiliations:
+      - id: id1
+        name: University of California, Riverside
+        department: Department of Psychology    
+author-note:
+  blank-lines-above-author-note: 1
+  # Disclosures condensed to one paragraph, but you can start a field with two line breaks to break them up: \n\nNew Paragraph
+  disclosures:
+    study-registration: Ethics approval statement. The study conforms to the US Federal Policy for the Protection of Human Subjects and was approved by the UC Riverside Institutional Review Board.
+    data-sharing: \n\n Data availability statement. The full data set and analysis code needed to reproduce the manuscript are available on OSF.  
+    conflict-of-interest: \n\n Conflict of interest disclosure. The authors report no conflict of interest.
+    financial-support: \n\n Funding statement. This work was supported by a James S. McDonnell Foundation Opportunity Award and a National Science Foundation grant (BCS 1941449) to the first author. 
+    gratitude: null
+    authorship-agreements: null
+abstract: "The current study reports the natural statistics of everyday motor experiences, measured throughout the day using wearable inertial sensors. Using a large data set of infants' real-time upright, sitting, prone, supine, and held experiences, we investigated how age and motor skill relate to the frequency and bout structure of body position. Our analyses replicated past survey and observational work by showing that older infants (11-14 months) spend more time sitting and upright compared with younger infants (4-7 months), and that the emergence of sitting and walking skills may contribute to these age differences. Furthermore, our analyses were novel in revealing that a larger share of younger infants' bouts were longer---lasting several minutes and even over an hour. In contrast, older infants had a greater share of shorter bouts less than 1 minute long, suggesting they experience a greater mix of positions. Within older infants, bout duration distributions also varied according to walking skill. We discuss the importance of understanding the natural statistics of motor experiences at different timescales for characterizing infants' opportunities for motor learning and perceptual-motor exploration in daily life. \n\n\n **Public Significance:** Infants' everyday movement relates to how they practice motor skills and learn about the surrounding world. Using data collected from wearable movement sensors that recorded for up to 10 hours in the home, we found that older versus younger infants spend their time in different movement activities. Older infants sit and stand more and experience more variation in movements, which may relate to changes in how they learn."
+keywords: [infancy, motor development, everyday experiences, wearable sensing, timeseries analysis]
+bibliography: [references.bib, packages.bib]
+format:
+  apaquarto-docx: 
+    floatsintext: false
+  apaquarto-html: default
+  apaquarto-typst: default
+  apaquarto-pdf: 
+    documentmode: man
+    fontsize: 12pt
+    floatsintext: false
+    a4paper: false
+    nolmodern: false
+    nofontenc: false
+    donotrepeattitle: false
+    notxfonts: false
+    notimes: false
+    notab: false
+    helv: false
+    nosf: false
+    tt: false
+    draftfirst: false
+    draftall: false
+    mask: false
+    journal: null
+    volume: null
+    course: null
+    professor: null
+    duedate: null
+    nocorrespondence: false
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+#| include: false
+set.seed(2025)
+knitr::opts_chunk$set(cache.extra = knitr::rand_seed)
+
+library(tidyverse)
+library(here)
+library(lubridate)
+library(patchwork)
+library(janitor)
+library(rstatix)
+library(scales)
+library(hms)
+library(lme4)
+library(lmerTest)
+library(interactions)
+library(emmeans)
+library(flextable)
+library(ftExtra)
+library(officer)
+library(knitr)
+library(papaja)
+library(parameters)
+library(conflicted)
+conflicts_prefer(purrr::discard)
+conflicts_prefer(dplyr::filter, .quiet = TRUE)
+conflicts_prefer(dplyr::lead, .quiet = TRUE)
+conflicts_prefer(dplyr::lag, .quiet = TRUE)
+conflicts_prefer(flextable::separate_header, .quiet = TRUE)
+conflicts_prefer(flextable::theme_apa)
+conflicts_prefer(janitor::make_clean_names, .quiet = TRUE)
+conflicts_prefer(lmerTest::lmer, .quiet = T)
+
+
+theme_update(text = element_text(size = 12),
+             axis.text.x = element_text(size = 12, color = "black"), 
+             axis.title.x = element_text(size = 14),
+             axis.text.y = element_text(size = 12,  color = "black"), 
+             axis.title.y = element_text(size = 14), 
+             panel.background = element_blank(),panel.border = element_blank(), 
+             panel.grid.major = element_blank(),
+             panel.grid.minor = element_blank(), axis.line = element_blank(), 
+             axis.ticks.length=unit(.25, "cm"), 
+             legend.key = element_rect(fill = "white")) 
+
+```
+
+```{r frequency-setup}
+#| include: false
+
+ds <- read_csv(here("data","lena-imu-compiled.csv"))
+
+ds <- ds %>% rename_with(make_clean_names) 
+ds <- ds %>% mutate(age_group = factor(ifelse(age < 8, 0, 1), labels = c("Younger","Older")),
+                    walker = ifelse(id_uni == "16103", "Non-Walker", walker),
+                    sitter = factor(sitter, levels = c("Non-Sitter","Sitter")),
+                    crawler = factor(crawler, levels = c("Non-Crawler","Crawler")),
+                    walker = factor(walker, levels = c("Non-Walker","Walker")),
+                    tripod = factor(tripod, levels = c("Non-Tripod","Tripod"), labels = c("Non-Sitter","Sitter")))
+
+
+# Exclude pilot participants and non-compliant sessions
+ds <- filter(ds, id != 185, id != 104, id_uni != "17803")
+
+# Exclude participants based on a minimum hour duration of data
+ds %>%  filter(exclude_time == 0, nap_time < .9) %>% count(id_uni)  %>% 
+  mutate(duration = n/2*10/60) %>% 
+  arrange(duration) -> nbins
+
+keep_ppts <- nbins %>% filter(duration > 3) %>% pull(id_uni)
+ds <- filter(ds, id_uni %in% keep_ppts)
+
+ds <- filter(ds, exclude_time == 0, nap_time < .9)
+
+ds %>% count(id_uni)  %>% 
+  mutate(duration = n/2*10/60) %>% 
+  arrange(duration) -> nbins
+
+# Create long format data 
+ds_long <- ds %>% pivot_longer(cols = sit_time:upright_time, names_to = "position", values_to = "prop") %>% 
+  mutate(Position = factor(position,
+                           levels = c("upright_time", "sit_time", "prone_time", "supine_time","held_time"),
+                           labels = c("Upright", "Sitting", "Prone", "Supine","Held"))) %>% 
+  arrange(Position, age)
+
+dvs <- unique(ds_long$Position)
+pal <-  c("#F0E442","#009E73","#56B4E9", "#E69F00","#0072B2") %>%  set_names(c("Upright", "Sitting", "Prone", "Supine", "Held"))
+ds_long$age_centered <- scale(ds_long$age, scale = F)
+
+num_sessions <- length(unique(ds$unique_id))
+
+```
+
+```{r bouts-setup}
+#| include: false
+
+ds_raw <- read_csv(here("data","imu-raw-position.csv")) %>% 
+  drop_na(pos) %>% filter(unique_id != "178/3")
+
+# Find each transition
+# Label that row with the corresponding window
+# Fill down the windows to make events
+ds_raw <- ds_raw %>% group_by(unique_id) %>% 
+  mutate(
+    epoch_period = ifelse(exclude_period == 0 & nap_period == 0, 0, 1),
+    epoch = ifelse(lag(epoch_period) != epoch_period, window, NA),
+    epoch = ifelse(window == 1, 1, epoch),
+  ) %>% 
+  fill(epoch)
+
+# Remove all nap/exclude epochs
+ds_raw <- ds_raw %>% filter(epoch_period == 0) %>% select(-epoch_period)
+
+# Set all single row postures to NA (within epochs)
+ds_raw <- ds_raw %>% group_by(unique_id, epoch) %>% 
+  mutate(pos_filtered = ifelse(lag(pos) != pos & lead(pos) != pos, NA, pos)) %>% 
+  fill(pos_filtered)
+
+# Find posture transitions
+ds_raw <- ds_raw %>% group_by(unique_id, epoch) %>% 
+  mutate(
+    bout = ifelse(lag(pos_filtered) != pos_filtered, window, NA),
+    bout = ifelse(window == 1, 1, bout),
+  ) %>% 
+  fill(bout)
+
+ds_bout <- ds_raw %>% group_by(id, session, agemo, walker, crawler, sitter, tripod, unique_id, epoch, bout) %>% 
+  summarize(time_start = first(time_start),
+            pos = first(pos_filtered),
+            duration = n()*2) %>% drop_na(pos) %>% 
+  filter(duration < 7000) %>% ungroup %>% 
+  mutate(age_group = factor(ifelse(agemo < 8, 0, 1), labels = c("Younger","Older")),
+         walker = ifelse(unique_id == "16103", "Non-Walker", walker),
+         sitter = factor(sitter, levels = c("Non-Sitter","Sitter")),
+         crawler = factor(crawler, levels = c("Non-Crawler","Crawler")),
+         walker = factor(walker, levels = c("Non-Walker","Walker")),
+         tripod = factor(tripod, levels = c("Non-Tripod","Tripod"), labels = c("Non-Sitter","Sitter")))
+
+# Filter out short recordings
+#overall_dur <- ds_bout %>% group_by(unique_id) %>% summarize(duration = sum(duration)/60/60)
+#keep_ppts <- overall_dur %>% filter(duration > 3) %>% pull(unique_id)
+ds_bout$iduni <- ds_bout$id*100 +  ds_bout$session
+ds_bout <- filter(ds_bout, iduni %in% keep_ppts) #use from prior section rather than recalculate
+
+# Factor position
+ds_bout <- ds_bout %>% mutate(Position = factor(pos, levels = c("Upright", "Sitting", "Prone", "Supine", "Held")))
+
+# Convenience variables
+ds_bout <- ds_bout %>% 
+  mutate(duration_min = duration / 60,
+         age = agemo,
+         id_uni = unique_id)
+
+```
+
+Learning and development depend on the natural statistics of infants' actual, lived experiences across multiple domains [@SloneAbney2023; @NenchevaSchwab2024; @CychoszRomeo2025; @AbneyFausey2025]. The most established examples come from language development. For example, individual differences in the frequency of adult speech predicts subsequent vocabulary development [@WeislederFernald2013]. But learning depends on more than just the frequency of input. Infant vocabulary is more strongly predicted by the temporal structure of adult speech—hearing more words in densely packed bouts that are distributed across the day—when controlling for speech frequency [@CychoszRomeo2025]. Recently, researchers have begun to characterize the frequency and temporal structure of infants' natural motor experiences. Observations of infants' home behavior reveal that infants touch objects with great frequency—60% of the day—in bouts that vary from only a few seconds to several minutes [@SwirbulHerzberg2022; @HerzbergFletcher2022]. Understanding the frequency and temporal structure of infants' motor experiences is important because it reveals the actual practice schedules that facilitate motor learning. Whereas laboratory experiments may present artificial conditions that mass or space practice trials, infants' real motor practice is formed from a temporally heterogeneous schedule of bouts [@HerzbergFletcher2022]. Measuring the natural statistics of everyday motor experiences can also inform clinical interventions that promote motor development. Moreover, the organization of motor experiences relate to infants' everyday opportunities for perceptual-motor exploration because infants actively gather information through their own movements [@Gibson1988; @FranchakAdolph2024; @Franchak2020].
+
+Here, we extend past work that characterized the natural statistics of infants' manual actions [@SwirbulHerzberg2022; @HerzbergFletcher2022] and walking behavior [@ColeRobinson2016] to reveal the temporal structure of *body position*—how infants spend time standing upright, sitting, lying prone, lying supine, and being held—and how body position experiences are organized in bouts of varying duration within a day. As we will review, within-day variations in activities, such as playtime and mealtimes, moderate the likelihood of different body positions [@FranchakFordOther]. Accordingly, full-day, continuous movement data are needed to accurately measure both the frequency and the bout structure of body positions. However, existing studies of body position have either recorded continuous data during brief video-recorded observations [@ThurmanCorbetta2017; @FranchakKretch2018] or have used surveys to sparsely estimate infant positioning across the day through caregiver report [@KarasikKuchirko2022; @MalachowskiSalo2023; @Franchak2019aa; @FranchakKadooka2024]. Each approach has limitations: Although laboratory or home video recordings provide rich, continuous behavior, the limited time of observation means that researchers do not observe experiences across the entire range of daily activities. And although surveys can ask caregivers to make estimates across different timescales (e.g., hourly or daily), surveys do not provide time series data about bouts of behavior. Thus, the current study used data collected from a novel technique that provides full-day, continuous recordings of behavior—machine learning predictions from wearable inertial sensors [@FranchakTang2024; @AiraksinenRasanen2020; @FranchakScott2021].
+
+## Frequency of everyday motor experiences
+
+Measuring the frequency of body position experiences is important for understanding opportunities for motor learning. More time spent in a body position can facilitate related skill development, such as how prone skills improve with respect to estimates of everyday time spent in a prone position [@CarsonZhang2022; @MajnemerBarr2005]. Understanding the frequency of body position experiences also provides a proxy for other developmentally-relevant exploratory experiences. Sitting position facilitates object exploration compared to lying prone and supine [@SoskaAdolph2010; @SoskaAdolph2014]. Sitting and upright positions provide different visual perspectives compared to lying prone [@KretchFranchak2014; @FranchakKretch2018; @LuoFranchak2020]. Moreover, caregivers speak differently to infants depending on infants' body position and locomotion [@KretchMarcinowski2025; @WestFletcher2022; @WestSaleh2023; @MalachowskiSalo2023; @SchneiderIverson2022; @KarasikTamis-Lemonda2014; @RouseyTangOther]. Thus, body position frequency may capture individual and developmental differences that are relevant to subsequent development both within and beyond the motor domain. Descriptive data about the frequency of body positions at different ages provides valuable contextual information for theorizing about how experiences might relate to development.
+
+Most prior work has described how the frequency of experiences differ according to chronological age and/or motor skill. For example, ecological momentary assessment surveys of infants' motor experiences found that sitting and upright time increase over the first year of life whereas time spent supine decreases [@Franchak2019aa; @FranchakKadooka2024]. Some differences are also linked to the emergence of new motor skills when controlling for age. The frequency of everyday sitting time is related to infants' acquisition of independent sitting skill [@Franchak2019aa; @KretchLuna2025]. Similarly, infants who had begun walking spent more time upright on two feet compared to non-walkers, even after controlling for age [@Franchak2019aa; @FranchakKadooka2024]. Because time within a day is finite, frequency increases in one body position may entail compensatory decreases in time spent in another position. More experienced sitting infants spend less time supine [@KretchLuna2025] and walking infants spend less time prone and sitting compared to non-walkers [@FranchakKadooka2024].
+
+Compared to laboratory studies of infant behavior, the expression of motor skills in natural home behavior depends both on what infants can do and what they (and their caregivers) choose to do. During laboratory play with caregivers, infants with greater sitting skill (measured with a standardized motor assessment) spent longer periods of time sitting [@KretchKoziol2023]. When playing freely in laboratory play sessions, walking infants chose to spend more time upright and less time sitting and prone compared with non-walkers [@FranchakKretch2018]. But across the entire daily routine in the home, infants' position also depends on caregiving choices, such as when to restrain infants in seating devices like high chairs and cradles [@KarasikKuchirko2022; @MalachowskiSalo2023; @AbbottBartlett2001]. Caregiving choices also depend on changing activity demands throughout the day---parents restrain infants more often during meals than during playtime [@FranchakFordOther; @BirkenLichtblau2015]---and according to infants' age and skill level---parents restrain older infants less frequently than younger infants [@FranchakKadooka2024; @CarsonZhang2022; @KarasikKuchirko2022].
+
+## Temporal structure of everyday motor experiences
+
+Recent studies from non-motor domains, such as vision, language, and music [@CychoszRomeo2025; @MendozaFausey2022; @ClerkinHart2017; @SloneAbney2023; @NenchevaSchwab2024], revealed the importance of measuring the temporal structure of infants' naturalistic learning experiences beyond frequency. Decades of laboratory research in motor learning have also demonstrated how the temporal structure of practice—blocked versus random, massed versus spaced—impacts the speed and retention of learning [@LeeFisher2019; @SheaLai2000; @SheaLai2000; @DutraCampos2025; @VanderLindeMorrongiello1985; @SchmidtLee2011]. However, artificially manipulated practice schedules unlikely capture how motor experiences are distributed in everyday life. Indeed, @HerzbergFletcher2022 showed that infants' bouts of manual experience vary greatly in duration, meaning that infants experience both massed and spaced practice interacting with objects within a day.
+
+The current study will extend this approach to identify the temporal structure of infants' body position experiences. The overall pattern at the scale of a day—frequency—might not reflect the temporal structure of behavior at shorter timescales [@AbneyFausey2025]. To make an exaggerated example, an infant who sits for 50% of the day could sit in 30-s bouts once per minute throughout a 10-hour waking day or could sit in one, continuous 5-hour bout and spend the next 5 hours standing upright and lying supine. Neither of these extremes are likely; however, they illustrate the knowledge gap that arises by only measuring the frequency of experiences. Real days are heterogeneous and filled with a mix of activities [@Tamis-LeMondaCustode2019; @FranchakFordOther]. Thus, we expect that the bout structure of motor experiences also varies within the day. Infants might have shorter bouts of positions during some times of the day, such as when playing, and longer bouts in a single position at others (such as when restrained in a high chair eating a meal or cuddling in a caregivers' arms before a nap). Thus, we need to measure body position across a full day to capture the bout structure across changes in activity.
+
+How might the temporal structure of body position experience change with age and motor skill development? We hypothesize that as infants age, and thus gain more volitional control over an increasing repertoire of skills, infants may more frequently engage in shorter positional bouts because they can change between different positions. For example, a younger infant who cannot sit should be more likely to have longer bouts lying supine on their backs, whereas an older infant who can walk may switch between multiple positions, incurring shorter bouts in each one. Indeed, in laboratory play infants switched positions more frequently after learning to crawl [@ThurmanCorbetta2017]. Bout structure may also depend on age differences in the use of restraint: Younger infants may have long bouts in a single position if they are more often restrained in a positioning device [@FranchakKadooka2024]. Thus, we predict that shorter position bouts will become more common according to infants' age and with motor skill development. If so, it would suggest developmental differences in the pace at which perceptual-motor experiences change within the day. For example, older infants who frequently switch positions may encounter a greater diversity of perceptual-motor inputs over shorter timescales, whereas younger infants, whose experiences are contained within longer position bouts, may have more homogeneous experiences in a given span of time.
+
+## Current study
+
+The current study leverages a unique data set of full-day infant motor experiences [@Franchak2023] collected using continuously-recording wearable inertial sensors to answer novel questions about the natural statistics of everyday motor experiences. Unlike survey or video observation studies, wearable sensors are uniquely suitable for passively recording day-long behavior at a high temporal resolution [@deBarbaroFausey2024; @AiraksinenGallen2022; @FranchakTang2024; @FranchakScott2021]. The data set contains machine-learning predictions of five positions (upright, sitting, prone, supine, and held) every 2 s over an average of 6.1 hours of natural, home behavior. Infants participated in 1 to 4 sessions within two age groups: Younger infants were tested at 4, 5, 6, and 7 months and older infants were tested at 11, 12, 13, and 14 months. This design allows us to test whether the frequency and temporal structure of body position experiences differ when comparing older versus younger infants. Moreover, motor skill data allow us to ask whether the frequency and bout structure of experiences differ between younger infants who can and cannot sit and older infants who can and cannot walk, when controlling for age. We chose to focus on sitting and walking milestones because they are universal and less idiosyncratic compared with other milestones, such as crawling [@FranchakAdolph2024]. 
+
+# Method
+
+## Transparency and openness
+
+The present study used a previously published data set available on Databrary [@Franchak2023] that has been previously described [@RouseyTangOther]. This manuscript is written in R version 4.5.0 [@R-base] and Quarto version 1.6.43 [@Quarto] using the *apaquarto* template (<https://wjschne.github.io/apaquarto/>) to provide computational reproducibility. An OSF repository contains the code and necessary pre-processed data to reproduce the manuscript, analyses, and figures (https://osf.io/wmgs4/?view_only=d30369b2f6594fe5ada7a65b56278aea). The analyses used the following R packages: *tidyverse* [@R-tidyverse], *lme4* [@R-lme4], *rstatix* [@R-rstatix], *patchwork* [@R-patchwork], and *flextable* [@R-flextable]. The analyses were not pre-registered.
+
+```{r}
+#| include: false
+ppt <- read_csv("data/ppt_info.csv") %>% filter(id != 104) %>% group_by(id) %>% slice_head(n = 1) %>% 
+  mutate(tdate = mdy(date), dob = mdy(infant_dob), age = tdate-dob, older = age > 275)
+table(ppt$infant_sex)
+table(ppt$older)
+table(ppt$infant_ethnicity)
+table(ppt$infant_race)
+```
+
+## Participants and design
+
+The data set contained a total of 67 typically developing infants (32 male, 35 female) who were recruited in Southern California to participate in the study: 30 were between 4-7 months of age, and 37 were between 11-14 months. Participants completed up to four monthly sessions (@fig-milestones). For the younger infants, sessions began when they were 4 months of age and concluded when they were 7 months. For the older infants, the sessions began when they were 11 months, concluding when they were 14 months. Each visit was scheduled within two weeks of the infants’ monthly birthdays (e.g., the 4 month session could occur between 3.5 and 4.5 months). This resulted in a total of 146 sessions across both age groups collected in the data set (4 additional sessions were collected but excluded due to technical issues with sensor recording). On average, participants completed a total of 2 sessions.
+
+@tbl-agesmilestones shows the number of included sessions (*n* = 128) used in the present analyses according to participant age in months. Eighteen sessions were excluded due to the usable data being less than 3 hours in duration. These exclusion criteria were implemented to ensure adequate coverage of infants’ awake time for the present analyses. @fig-milestones and @tbl-agesmilestones also show the distribution of sitting infants within the younger age group, defined as infants who could sit independently for 30 s, whether or not they used their hands for support (sometimes termed "prop sitting" or "tripod sitting"), and walking infants within the older age group, defined as whether the infant could independently walk for 10 ft without stopping or falling. At 4 months, 1 infant met the criteria to be classified as a sitter; by 7 months, 13 of 17 were sitters. At 11 months, 1 infant was classified as a walker; by 14 months, 10 of 15 infants were walkers. Milestones were obtained using caregiver report and confirmed from video.
+
+```{r fig-milestones}
+#| fig-cap: Motor skill level for each infant at each session in the younger and older groups
+#| fig-width: 5.5
+#| fig-height: 7
+#| apa-note: Within each age group panel, every row shows one infant's data. Each circle shows a completed session; infants with multiple sessions have circles connected by a solid black line. The color of the circle refers to the infant's skill category at that session. Infants are ordered by the age of sitting and walking skill attainment.
+
+ds_milestones <- ds %>% 
+  group_by(unique_id) %>% 
+  slice_head(n = 1) %>% ungroup %>% 
+  select(agemo, id, age_group, session, tripod, walker) %>% 
+  mutate(milestone = ifelse(age_group == "Younger", as.character(tripod), as.character(walker))) %>% ungroup 
+
+ds_onset <- ds_milestones %>% group_by(age_group, id) %>% 
+  filter((age_group == "Younger" & tripod == "Sitter") | (age_group == "Older" & walker == "Walker")) %>% 
+  summarize(min_milestone = min(agemo)) %>% 
+    select(id, age_group, min_milestone)
+
+ds_milestones <- left_join(ds_milestones, ds_onset) %>% 
+  replace_na(list(min_milestone = 0)) %>% 
+  arrange(age_group, min_milestone)
+
+ds_id <- ds_milestones %>%  group_by(id, age_group) %>% 
+  slice_head(n = 1) %>% group_by(age_group) %>% arrange(min_milestone) %>%
+  mutate(temp_id = row_number()) %>% ungroup %>% select(id, temp_id, -age_group)
+
+ds_milestones <- ds_milestones %>% left_join(ds_id)
+
+ggplot(ds_milestones, aes(x=agemo, y=temp_id, color=factor(milestone, levels=c("Non-Sitter", "Sitter", "Non-Walker","Walker"))))+
+  geom_line(aes(group = temp_id), color = "black") +
+  geom_point(shape=16, size=5, alpha=1)+
+  scale_color_manual(values=c("lightblue","darkblue","orange","brown")) + facet_wrap(~ age_group, nrow = 1, scales = "free") + 
+  scale_x_continuous(breaks = c(4:7,11:14)) + 
+  scale_y_continuous(breaks = c(seq(1, 65, by = 1)), labels = NULL) +
+  labs(x="Age (mo)",
+       y="Individual Participants",
+       color = "Motor Skill") + 
+  theme(axis.ticks.y = element_blank()) 
+```
+
+Caregivers reported infants' race as either White (*n* = 23), More than One Race (*n* = 16), Asian (*n* = 3), Black or African American (*n* = 2), or a race other than those listed (*n* = 8). Infant ethnicity was reported as Hispanic/Latino/a (*n* = 31) or non-Hispanic (*n* = 24). Fifteen families chose not to report information about the infant’s race, and 12 chose not to report ethnicity. Caregivers provided informed consent at the start of the study.
+
+```{r tbl-agesmilestones}
+#| tbl-cap: Age and skill (sitting/walking) at each monthly session 
+#| ft.align: left 
+
+milestones <- ds %>% group_by(age_group, session, id_uni) %>% 
+  slice_head(n = 1) %>% 
+  group_by(age_group, session) %>% 
+  summarize(
+    n_sessions = n(),
+    n_sitters = sum(tripod == "Sitter"),
+    n_walkers = sum(walker == "Walker"),
+  ) %>% ungroup 
+
+ages <- ds %>% group_by(age_group, session) %>% summarize(
+  min_age = min(age),
+  mean_age = mean(age),
+  max_age = max(age)
+) %>% ungroup %>% left_join(milestones) %>% 
+  pivot_wider(id_cols = session, names_from = age_group, values_from = min_age:n_walkers)
+
+ages <- ages %>% select(-n_sitters_Older, -n_walkers_Younger) %>% 
+  relocate("n_sessions_Younger", .before = "min_age_Younger") %>% 
+  relocate("n_sessions_Older", .before = "min_age_Older") %>% 
+  relocate("n_sitters_Younger", .before = "min_age_Younger") %>% 
+  relocate("n_walkers_Older", .before = "min_age_Older") %>% 
+  relocate("mean_age_Younger", .after = "min_age_Younger") %>% 
+  relocate("max_age_Younger", .after = "mean_age_Younger") %>% 
+  mutate(session = as.character(round(session,0)))
+
+ages %>% 
+  flextable() %>% flextable::theme_apa() %>% line_spacing(part = "all") %>% 
+  padding(padding.top = 2, padding.bottom = 2) %>% 
+  set_header_labels(session = "Session", n_sessions_Younger = "n", n_sitters_Younger = "Sitters", min_age_Younger = "Age (min)", mean_age_Younger = "Age (mean)", max_age_Younger = "Age (max)", n_sessions_Older = "n", n_walkers_Older = "Walkers", min_age_Older = "Age (min)", mean_age_Older = "Age (mean)", max_age_Older = "Age (max)") %>% 
+  add_header_row(values = c("", "Younger Infants", "Older Infants"), colwidths = c(1,5,5)) %>% 
+  set_table_properties(layout = "autofit", width = .6) %>% 
+  align(align = "center", part = "all")
+```
+
+## Apparatus and procedure
+
+The data set employed procedures previously described in past research [@FranchakTang2024; @RouseyTangOther]. To measure continuous infant movement, four lightweight MC10 Biostamp inertial movement unit (IMU) sensors were embedded in a pair of custom-designed leggings at both hips and ankles. Each sensor (6.6 x 3.4 cm, 6g) recorded gyroscope and accelerometer data at 62.5 Hz for up to 12 hours. Additionally, an action camera (e.g., GoPro) mounted on a tripod was used to video record the first 3 hours of the session. Caregivers were given a log sheet to keep a record of any naps and times they took the garments off their infant so those times could be excluded from analyses.
+
+At the beginning of each session, a researcher delivered the equipment to the family’s house. With the aid of the researcher, caregivers were instructed to place the sensor-embedded leggings on their infant and set up the camera in a location that captured the majority of the room. After being guided through a series of activities that involved placing their infant in several positions for a minimum of 1 minute, followed by a 10-minute free-play session, caregivers were instructed to go about the remainder of their day as they normally would. The sensors were worn until the infant’s bedtime. A researcher returned to the participant’s house the following day to retrieve the equipment and begin processing the data.
+
+## Data processing and analysis
+
+Only sessions with more than 3 hours of usable data (when infants were awake and at home wearing the sensor garment) were included in our analyses. Usable data varied from session to session due to naps and periods of time when the leggings were removed (e.g., diaper changes, excursions from the home). After these exclusions, recordings ranged from `r apa_num(min(nbins$duration))`-`r apa_num(max(nbins$duration))` hours (*M* = `r apa_num(mean(nbins$duration))`, *SD* = `r apa_num(sd(nbins$duration))`) of usable data.
+
+A previously-validated machine learning approach was used to predict body position from the IMU data [@FranchakTang2024; @FranchakScott2021]. A random forest model was trained on a subset of 80 sessions in which infant body position was coded from video and then linked with the accelerometer and gyroscope data from the IMU sensors. Motion features were extracted from 4-s segments of sensor data and used to train a random forest classifier. The Supplemental Materials provides a detailed evaluation of the classification performance, revealing strong accuracy (89%) and Cohen's kappa (.86) metrics of agreement between model predicted and human coded ground truth. After validation, the model was used on the full data set to classify body position into one of five possible categories: supine (lying on the back or side), prone (lying on the stomach or in a crawling stance), sitting (with the buttocks in contact with a surface), upright (standing or kneeling), or held (suspended in the air, such as when carried by a caregiver).
+
+The machine learning predictions yielded a raw time series of position categories every 2 s throughout the day, excluding times that infants were napping or data were excluded for other reasons mentioned above. @fig-timelines A shows exemplar full-day time series of body position for four sessions (from top to bottom: 7-mo non-sitter, 7-mo sitter, 12-mo non-walker, and 12-mo walker). Each position is indicated by a different color; blank periods in the time series show portions of the day that were excluded due to naps and/or excursions out of the house. Because recording time varied between sessions, we calculated body position **frequency** as the percent of time infants were in a position out of the total valid recording time. The first set of analyses focused on body position frequency at the scale of the day, and the second set of analyses focused on the **bout durations** of each position event. @fig-timelines B shows a zoomed in view of each time series in panel A to focus on a half-hour period from 3:45pm-4:15pm; annotations highlight exemplar bouts of different lengths.
+
+Bouts were determined by aggregating consecutive 2-s predictions of the same position into a single bout. For example, 30 consecutive samples of sitting (one every 2 s) would yield a 1-min bout of sitting. To avoid spurious short bouts from interrupting longer ones, we smoothed across interruptions lasting a single prediction sample of 2 s. As shown in the Supplemental Materials, the resulting bout duration calculations yielded strong agreement with human-coded bout durations (*r* = .90).
+
+```{r fig-timelines}
+#| fig-cap: Exemplar data from 4 infants showing (A) full-day position timeseries and (B) zoomed-in detail of a 30-minute period within the day 
+#| fig-width: 7.5 
+#| fig-height: 6 
+#| apa-note: Timelines are individual exemplars from 4 sessions (7-mo non-sitter, 7-mo sitter, 12-mo non-walker, 12-mo walker). White gaps in timelines are excluded data from naps, baths, or errands out of the house. Magenta asterisks in panel A highlight the 30-min period in each timeline that is detailed in panel B. Each continuous block of color constitutes a bout. Three example bouts are annotated to illustrate varying bout lengths.
+
+knitr::include_graphics('./figures/timeline_example.png')
+```
+
+```{r timeline-gen}
+#| include: false
+#| eval: false
+
+# This block of code is used to create the timeline exemplars, but the figure had to be edited in illustrator and was brought in as an external graphic 
+
+ds_bout$time_plot <- as_hms(force_tz(ds_bout$time_start+seconds(ds_bout$duration/2), "America/Los_Angeles"))
+
+lims <- as_hms(c('09:00:00', '21:59:00'))
+hour_breaks = as_hms(c('09:00:00', '10:00:00', '11:00:00', '12:00:00', '13:00:00', '14:00:00', '15:00:00', '16:00:00', '17:00:00', '18:00:00', '19:00:00', '20:00:00', '21:00:00'))
+label_breaks = c("9am","","11am","","1pm","","3pm","","5pm","","7pm","","9pm")
+
+exemplar_ids <- c("138/4","110/4","111/2", "125/2")
+id_labels <- c("7-mo\nNon-Sitter", "7-mo\nSitter",
+               "12-mo\nNon-Walker", "12-mo\nWalker")
+
+p1 <- ds_bout %>% filter(unique_id %in% exemplar_ids) %>% 
+  mutate(unique_id = factor(unique_id, levels = exemplar_ids, labels = id_labels)) %>% 
+  ggplot(aes(x = time_plot, y = 1, width = duration, fill = Position)) + 
+  geom_tile() + scale_fill_manual(values = pal) + 
+  facet_wrap(~unique_id, ncol = 1, scales = "free_x", strip.position = "left") + 
+  scale_x_time(breaks = hour_breaks, name = "", limits = lims, labels = label_breaks) + 
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+  ) + 
+  ggtitle("A. Full-day exemplars")
+
+zoom_lims <- as_hms(c('15:40:00', '16:30:00'))
+zoom_quarter_breaks = as_hms(c('15:45:00', '16:00:00','16:15:00'))
+zoom_label_breaks = c("3:45pm","4:00pm","4:15pm")
+
+
+p2 <- ds_bout %>% filter(unique_id %in% exemplar_ids) %>% 
+  mutate(unique_id = factor(unique_id, levels = exemplar_ids, labels = id_labels)) %>% 
+  ggplot(aes(x = time_plot, y = 1, width = duration, fill = Position)) + 
+  geom_tile() + scale_fill_manual(values = pal) + 
+  facet_wrap(~unique_id, ncol = 1, scales = "free_x", strip.position = "left", axes = "margins") + 
+  scale_x_time(breaks = zoom_quarter_breaks, name = "", limits = zoom_lims, labels = zoom_label_breaks) + 
+  theme(
+    axis.title.y = element_blank(),
+    axis.text.y = element_blank(),
+    axis.ticks.y = element_blank(),
+  ) +
+  ggtitle("B. Half-hour exemplars")
+
+p1 + p2 + plot_layout(guides = "collect", axes = "collect", axis_titles = "collect") & theme(legend.position = "bottom")
+ggsave("figures/timeline_exemplars.eps", units = "in", width = 9, height = 8)
+
+```
+
+# Results
+
+The current study leveraged `r round(sum(nbins$duration))` hours of continuously-recorded infant body position data in the home to reveal the natural statistics of everyday motor experience. In the first set of analyses, we asked how the frequency of position experiences differed between younger and older infants, and we tested whether the frequency of experiences differed according to motor skill within each age group (non-sitters vs. sitters for younger infants, non-walkers vs. walkers for older infants). In the second set of analyses, we compared whether the temporal structure of position bouts related to infants' age and motor skill.
+
+## Age and skill differences in body position frequency
+
+We examined the frequency of infants’ daily position in two ways. First, we compared the younger infants to the older infants to determine whether infants’ daily position experiences differ across the first year. Next, we compared within each age group to determine whether motor skill relates to infants’ daily position experiences when controlling for age. We adopted linear mixed-effects models in both analyses with sessions nested within participants as random effects to accommodate the repeated measure structure in the data set.
+
+```{r tbl-freqbyagegroup}
+#| apa-note: Age group served as a categorical predictor with "Younger" serving as the reference level.
+#| tbl-cap: Linear mixed-effects models comparing body position frequency between age groups
+#| ft.align: left
+
+pos_model_cohort <- function(p) { 
+  temp_ds <- filter(ds_long, Position == p) %>% drop_na(Position) %>% 
+    mutate(prop = prop * 100)
+  res <- lmer(prop ~ age_group + (1 |id/session), data = temp_ds)
+}
+
+res_Cohort <- map(dvs, pos_model_cohort) %>% set_names(dvs)
+betas <- map_dfr(res_Cohort, ~standardize_parameters(.x, method = "refit"))
+res_Cohort <- map(res_Cohort, ~summary(.x)$coefficients, digits = 3) 
+res_Cohort <- res_Cohort %>% map2_dfr(dvs, ~ mutate(as.data.frame(.x), Position = .y))
+res_Cohort$Beta <- betas$Std_Coefficient
+
+
+res_Cohort %>% 
+  relocate("Position", .before = "Estimate") %>% 
+  relocate("Beta", .after = "Estimate") %>% 
+  rename(p = `Pr(>|t|)`, SE = `Std. Error`, t = `t value`) %>% 
+  mutate(p = ifelse(p < .001,"<.001",round(p,3)),
+         p = str_remove(p, "^0")) %>% 
+  add_column(Term = rep(c("Intercept","Age Group"), 5), .before = "Estimate") %>% 
+  select(-SE, -df) %>% 
+  flextable() %>% flextable::theme_apa() %>% line_spacing(part = "all") %>% set_header_labels(Estimate = "Coef", Beta = "Std. Coef") %>% 
+  merge_v(j = "Position") %>% fix_border_issues() %>% 
+  hline(i = seq(2,10,2)) %>% 
+  padding(padding.top = 2, padding.bottom = 2) %>% 
+  set_table_properties(layout = "autofit", width = .6) %>% 
+  align(align = "center", part = "all")
+```
+
+```{r descriptives-freq}
+freq_cohort <- ds_long %>% group_by(id, session, age_group, Position) %>% summarize(prop = mean(prop*100)) %>% group_by(age_group, Position) %>% get_summary_stats(prop) %>% mutate(r = str_glue("{age_group}_{Position}"), mean = apa_num(mean), sd = apa_num(sd)) %>% column_to_rownames(var = "r")
+
+skill_younger <- ds_long %>% filter(age_group == "Younger") %>% group_by(id, session, tripod, Position) %>% summarize(prop = mean(prop*100)) %>% group_by(tripod, Position) %>% get_summary_stats(prop) %>% mutate(r = str_glue("{tripod}_{Position}"), mean = apa_num(mean), sd = apa_num(sd)) %>% column_to_rownames(var = "r")
+
+
+skill_older <- ds_long %>% filter(age_group == "Older") %>% group_by(id, session, walker, Position) %>% summarize(prop = mean(prop*100)) %>% group_by(walker, Position) %>% get_summary_stats(prop) %>% mutate(r = str_glue("{walker}_{Position}"), mean = apa_num(mean), sd = apa_num(sd)) %>% column_to_rownames(var = "r")
+
+```
+
+### Age differences in body position frequency
+
+@fig-freqskill shows that older infants spent more time upright and sitting compared with younger infants, whereas younger infants spent more time supine compared with older infants. The linear mixed-effects model results in @tbl-freqbyagegroup confirm those age differences in separate models for each body position testing the effect of age group (with younger infant as the reference category). Younger infants were rarely upright, which took up *M* = `r freq_cohort['Younger_Upright','mean']`% (*SD* = `r freq_cohort['Younger_Upright','sd']`) of their awake time. In contrast, older infants spent significantly greater time upright (*M* = `r freq_cohort['Older_Upright','mean']`%, *SD* = `r freq_cohort['Older_Upright','sd']`). Sitting showed a similar age difference: Whereas younger infants sat *M* = `r freq_cohort['Younger_Sitting','mean']`% (*SD* = `r freq_cohort['Younger_Sitting','sd']`) of their awake time, older infants sat for *M* = `r freq_cohort['Older_Sitting','mean']`% (*SD* = `r freq_cohort['Older_Sitting','sd']`). Prone time was relatively infrequent among both younger (*M* = `r freq_cohort['Younger_Prone','mean']`%, *SD* = `r freq_cohort['Younger_Prone','sd']`) and older infants (*M* = `r freq_cohort['Older_Prone','mean']`%, *SD* = `r freq_cohort['Older_Prone','sd']`), and did not significantly differ according to age group. Supine was the most frequent body position for younger infants with *M* = `r freq_cohort['Younger_Supine','mean']`% (*SD* = `r freq_cohort['Younger_Supine','sd']`) of their awake time, but older infants spent significantly less time supine (*M* = `r freq_cohort['Older_Supine','mean']`%, *SD* = `r freq_cohort['Older_Supine','sd']`). Finally, time held by caregivers was relatively brief among younger (*M* = `r freq_cohort['Younger_Held','mean']`%, *SD* = `r freq_cohort['Younger_Held','sd']`) and older infants (*M* = `r freq_cohort['Older_Held','mean']`%, *SD* = `r freq_cohort['Older_Held','sd']`), and did not significantly differ according to age group.
+
+```{r tbl-freqskill}
+#| apa-note: Age in months served as a continuous predictor and was centered within each age group; skill was a categorical predictor with non-sitters/non-walkers serving as the reference categories. 
+#| tbl-cap: Linear mixed-effects models predicting body position frequency from age in months and motor skill within each age group 
+#| ft.align: left
+ 
+pos_model_age_skill <- function(p, a) { 
+  if (a == "Younger") {
+    temp_ds <- filter(ds_long, Position == p, age_group == a) %>% drop_na(Position, tripod) %>% mutate(prop = prop * 100)
+    temp_ds$age_centered <- scale(temp_ds$age, scale = F)
+    res <- lmer(prop ~ age_centered+tripod + (1 |id/session), data = temp_ds)
+  } else {
+    temp_ds <- filter(ds_long, Position == p, age_group == a) %>% drop_na(Position, walker) %>% mutate(prop = prop*100)
+    temp_ds$age_centered <- scale(temp_ds$age, scale = F)
+    res <- lmer(prop ~ age_centered+walker + (1 |id/session), data = temp_ds)
+  }
+}
+
+res_Younger <- map(dvs, ~pos_model_age_skill(p = .x, a = "Younger")) %>% set_names(dvs)
+betas <- map_dfr(res_Younger, ~standardize_parameters(.x, method = "refit"))
+res_Younger <- map(res_Younger, ~summary(.x)$coefficients, digits = 3) 
+res_Younger <- res_Younger %>% map2_dfr(dvs, ~ mutate(as.data.frame(.x), Position = .y)) %>% 
+  add_column(beta = betas$Std_Coefficient) %>% 
+  relocate("Position", .before = "Estimate") %>% 
+  relocate("beta", .after = "Estimate") %>% 
+  rename(p = `Pr(>|t|)`, SE = `Std. Error`, t = `t value`) %>% 
+  mutate(p = ifelse(p < .001,"<.001",round(p,3)),
+         p = str_remove(p, "^0")) %>% 
+  add_column(Term_younger = rep(c("Intercept","Age","Sitter"), 5), .before = "Estimate") %>% 
+  select(-SE, -df)
+
+res_Older <- map(dvs, ~pos_model_age_skill(p = .x, a = "Older")) %>% set_names(dvs)
+betas <- map_dfr(res_Older, ~standardize_parameters(.x, method = "refit"))
+res_Older <- map(res_Older, ~summary(.x)$coefficients, digits = 3) 
+res_Older <- res_Older %>% map2_dfr(dvs, ~ mutate(as.data.frame(.x), Position = .y)) %>% 
+  add_column(beta = betas$Std_Coefficient) %>% 
+  relocate("Position", .before = "Estimate") %>% 
+  relocate("beta", .after = "Estimate") %>% 
+  rename(P_Older = `Pr(>|t|)`, SE = `Std. Error`, "Estimate_Older" = "Estimate", "Beta_older" = beta,
+         df_Older = "df", t_Older = `t value`) %>% 
+  mutate(P_Older = ifelse(P_Older < .001,"<.001",round(P_Older,3)),
+         P_Older = str_remove(P_Older, "^0")) %>% 
+  add_column(Term_older = rep(c("Intercept","Age","Walker"), 5), .before = "Estimate_Older") %>%
+  select(-SE, -Position, -df_Older)
+
+bind_cols(res_Younger, res_Older) %>% 
+  flextable() %>% flextable::theme_apa() %>% line_spacing(part = "all") %>% 
+  set_header_labels(P_Older = "p", df_Older = "df", t_Older = "t", Estimate_Older = "Coef.", Estimate = "Coef.", beta = "Std. Coef.", Beta_older = "Std. Coef.",
+                    Term_older = "Term", Term_younger = "Term") %>% 
+  merge_v(j = "Position") %>% fix_border_issues() %>% 
+  hline(i = seq(3,15,3)) %>% 
+  padding(padding.top = 2, padding.bottom = 2) %>% 
+  set_table_properties(layout = "autofit", width = .99) %>% 
+  align(align = "center", part = "all") %>% 
+  add_header_row(values = c("", "Younger Infants", "Older Infants"), colwidths = c(1,5,5)) 
+  
+```
+ 
+### Skill differences in body position frequency
+
+Next, we examined how infants’ daily body position frequency differs by motor skill by comparing sitters vs. non-sitters in the younger group and walkers vs. non-walkers in the older group while controlling for age. Each model included fixed effects for motor skill and age in months to predict each body position frequency. Each motor skill was a binary predictor with non-sitters and non-walkers serving as the reference groups. Age was a continuous variable measured in months and centered within each age group. Preliminary analyses found that including interaction terms did not improve model fit, thus, they were omitted from the final analyses shown in @tbl-freqskill.
+
+For younger infants, upright, prone, and supine time differed between non-sitters and sitters while controlling for age (light blue vs. dark blue lines in @fig-freqskill). Age did not predict differences in any position frequency after controlling for the effect of sitting. Younger non-sitters spent *M* = `r skill_younger['Non-Sitter_Upright','mean']`% (*SD* = `r skill_younger['Non-Sitter_Upright','sd']`) of their awake time upright and *M* = `r skill_younger['Non-Sitter_Prone','mean']`% (*SD* = `r  skill_younger['Non-Sitter_Prone','sd']`) prone, both of which were significantly less compared with sitters who spent *M* = `r skill_younger['Sitter_Upright','mean']`% (*SD* = `r skill_younger['Sitter_Upright','sd']`) of their awake time upright and *M* = `r skill_younger['Sitter_Prone','mean']`% (*SD* = `r skill_younger['Sitter_Prone','sd']`) prone. In contrast, non-sitters spent significantly more time supine (*M* = `r skill_younger['Non-Sitter_Supine','mean']`%, *SD* = `r skill_younger['Non-Sitter_Supine','sd']`) compared with sitters (*M* = `r skill_younger['Sitter_Supine','mean']`%, *SD* = `r skill_younger['Sitter_Supine','sd']`). Although non-sitters' sitting time of *M* = `r skill_younger['Non-Sitter_Sitting','mean']`% (*SD* = `r skill_younger['Non-Sitter_Sitting','sd']`) was less than sitters' sitting time (*M* = `r skill_younger['Sitter_Sitting','mean']`%, *SD* = `r skill_younger['Sitter_Sitting','sd']`), the difference was not statistically significant. Note, non-sitting versus sitting was defined based on skill—whether infants could sit independently. Thus, non-sitters could still be in a sitting position during the day, but could not maintain that position without external support. Finally, no significant age or sitting skill difference was found for younger infants' held time.
+
+For older infants, upright and prone time differed between non-walkers and walkers while controlling for age (light orange vs. brown lines in @fig-freqskill). Age still predicted a significant increase in upright frequency after controlling for the effect of walking. Older non-walkers spent significantly more time prone (*M* = `r skill_older ['Non-Walker_Prone','mean']`%, *SD* = `r skill_older['Non-Walker_Prone','sd']`) compared with walkers (*M* = `r skill_older ['Walker_Prone','mean']`%, *SD* = `r skill_older['Walker_Prone','sd']`). In contrast, non-walkers spent significantly less time upright (*M* = `r skill_older ['Non-Walker_Upright','mean']`%, *SD* = `r skill_older['Non-Walker_Upright','sd']`) compared with walkers (*M* = `r skill_older ['Walker_Upright','mean']`%, *SD* = `r skill_older['Walker_Upright','sd']`). Non-walkers spent *M* = `r skill_older ['Non-Walker_Sitting','mean']`% (*SD* = `r skill_older['Non-Walker_Sitting','sd']`) of their awake time sitting, *M* = `r skill_older ['Non-Walker_Supine','mean']`% (*SD* = `r skill_older['Non-Walker_Supine','sd']`) supine, and *M* = `r skill_older ['Non-Walker_Held','mean']`% (*SD* = `r skill_older['Non-Walker_Held','sd']`) held by a caregiver, none of which significantly differed from walkers’ sitting time (*M* = `r skill_older ['Walker_Sitting','mean']`%, *SD* = `r skill_older['Walker_Sitting','sd']`), supine time (*M* = `r skill_older ['Walker_Supine','mean']`%, *SD* = `r skill_older['Walker_Supine','sd']`), and held time (*M* = `r skill_older ['Walker_Held','mean']`%, *SD* = `r skill_older['Walker_Held','sd']`).
+
+```{r fig-freqskill}
+#| fig-cap: Frequency of body position experience by age and motor skill
+#| fig-width: 5.5
+#| fig-height: 6
+#| apa-note: Each point shows the percent of awake time spent in a body position at each session. Younger infants (4-7 months) are plotted separately for non-sitters (light blue) compared to sitters (dark blue) and older infants (11-14 months) are plotted separately for non-walkers (orange) versus walkers (brown). Linear best-fit lines are shown within each age and skill group.
+
+ggplot() +
+  stat_summary(aes(x = age, y = prop*100, group = id_uni, color = tripod), geom = "point", size = 2.5, shape = 21, alpha = .5, data = filter(ds_long, age < 10)) + 
+  stat_summary(aes(x = age, y = prop*100, group = id_uni, color = walker), geom = "point", shape = 21,  size = 2.5, alpha = .5, data = filter(ds_long, age > 10)) +
+  geom_smooth(aes(x = age, y = prop*100, color = tripod), method = "lm", data = filter(ds_long, age < 10)) +   
+  geom_smooth(aes(x = age, y = prop*100, color = walker), method = "lm", se = T,
+              data = filter(ds_long, age > 10)) +
+  facet_wrap("Position", ncol = 2) + 
+  scale_color_manual(name = "", values = c("lightblue","darkblue","orange","brown")) + 
+  scale_x_continuous(name = "Age (months)", breaks = c(4,5,6,7,11,12,13,14), limits = c(3,15)) + 
+  scale_y_continuous(name = "Percentage of awake time", breaks = seq(0, 100, 25), limits = c(-5, 105)) +
+  guides(color = guide_legend(nrow = 2)) +
+   theme(
+    legend.position = c(0.95, 0.02),             
+    legend.justification = c("right", "bottom"),
+    legend.margin = margin(4, 6, 4, 6)
+  )
+```
+
+## Age and skill differences in temporal structure of position bouts
+
+In the second set of analyses, we examined the temporal structure of the `r nrow(ds_bout)` position bouts. @fig-bout-distributions A and B show that the distribution of bout durations was highly skewed: Durations ranged from a minimum of 8 **seconds** (the shortest duration that could be detected) to `r apa_num(max(ds_bout$duration_min)/60)` **hours**. To illustrate the skew, the histogram in @fig-bout-distributions A shows the percentage of bouts in four ranges: 85.56% of bouts lasted \< 1 min, 12.01% of bouts lasted 1-5 min, 1.45% of bouts lasted 5-25 min, and 0.98% of bouts lasted \> 25 min. @fig-bout-distributions B and subsequent figures plot bout duration on a log10 scale to better visualize the occurrence of very short and very long bout durations.
+
+```{r fig-bout-distributions}
+#| fig-cap: Distribution of bout durations (A) across infants, (B) in log scale, (C) comparing age groups, and (D) comparing non-walkers and walkers
+#| fig-width: 7.5
+#| fig-height: 6.5
+#| apa-note: The extreme skew present in (A) led us to adopt log-scaled visualizations in (B)-(D). Histograms indicate the absolute occurrence (in number of bouts) according to each bout duration; density plots indicate relative occurrence to facilitate comparison between data sets with varying numbers of bouts.
+
+p1 <- ds_bout %>%
+  ggplot(aes(duration_min)) +
+  geom_histogram(breaks = c(0,1,5,25,125),
+                 fill = "white", color = "black") +
+  scale_x_continuous(breaks = c(1,5,25,125), name = "Bout duration (min)") +
+  geom_text(
+    stat = "bin", aes(label = str_c(round(after_stat(count)/nrow(ds_bout)*100,2),"%")),
+    vjust = -.9, nudge_x = 12, breaks = c(0,1,5,10,125)
+  ) + 
+  scale_y_continuous(name = "Number of bouts", limits = c(0,65000),
+                     breaks = c(0,20000,40000,60000),
+                     labels = c("0","2e4","4e4","6e4")) +
+  ggtitle("A. Histogram of bout duration")
+
+p2 <- ds_bout %>%
+  ggplot(aes(duration_min)) +
+  geom_histogram(bins = 17,fill = "white", color = "black") + 
+  scale_x_log10(breaks = c(0.05,1,5,25,125), labels = c(0,1,5,25,125), limits = c(0.05,125), name = "Bout duration (min)") +
+  ylab("Number of bouts") +
+  ggtitle("B. Histogram on log scale")
+
+anno_p3 <- tribble(
+  ~x, ~y, ~text, ~age_group, 
+  1.5, .85, "Older infants:\nMore bouts < 1 min", "Older",
+  10, .4, "Younger infants:\nMore bouts > 1 min", "Younger"
+) %>% mutate(age_group = factor(age_group, levels = c("Younger","Older")))
+p3 <- ds_bout %>% 
+  ggplot(aes(duration_min, after_stat(density), color = age_group)) +
+  geom_freqpoly(bins = 15,linewidth = 1) + 
+  scale_x_log10(breaks = c(0.05,1,5,25,125), labels = c(0,1,5,25,125), limits = c(0.05,125), name = "Bout duration (min)") +
+  scale_color_manual(breaks = c("Younger","Older"),values = c("dodgerblue4","sienna2"),name = "") + 
+  ylab("Density of bouts") +
+  geom_text(data = anno_p3, aes(x = x, y = y, label = text, color = age_group), size = 4, show.legend = FALSE) + 
+  theme(legend.position = "bottom", axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) + 
+  ggtitle("C. Younger vs. older")
+
+anno_p4 <- tribble(
+  ~x, ~y, ~text, ~walker, 
+  1.4, .88, "Non-walkers:\nMore bouts < 1 min", "Non-Walker",
+  6, .4, "Walkers: More\nbouts 1-5 min", "Walker"
+) %>% mutate(walker = factor(walker, levels = c("Non-Walker","Walker")))
+
+p4 <- ds_bout %>% filter(age_group == "Older") %>% 
+  ggplot(aes(duration_min, after_stat(density), color = walker)) +
+  geom_freqpoly(bins = 15,linewidth = 1) + 
+  scale_x_log10(breaks = c(0.05,1,5,25,125), labels = c(0,1,5,25,125), limits = c(0.05,125), name = "Bout duration (min)") +
+  scale_color_manual(breaks = c("Non-Walker","Walker"),values = c("orange","brown"),name = "") + 
+  ylab("Density of bouts") +
+  geom_text(data = anno_p4, aes(x = x, y = y, label = text, color = walker), size = 4, show.legend = FALSE) + 
+  theme(legend.position = "bottom", axis.text.y = element_blank(),
+        axis.ticks.y = element_blank()) + 
+  ggtitle("D. Older non-walkers vs. walkers") 
+
+(p1+p2)/(p3 + p4)
+```
+
+Although short bouts (\< 1 min) were exponentially more common than very long bouts (\> 25 min), it is important to distinguish the number of bouts (@fig-stacked A) from how much time infants accumulate across bouts of different lengths (@fig-stacked B). Even though bouts lasting \< 1 min accounted for *M* = 85.56% of bouts (*SD* = 6.1%), they only accumulate to 27.9% (*SD* = 12.7%) of infants' total awake time (green bars on @fig-stacked B). And although bouts \> 25 min make up less than 1% of bouts, their long duration meant that they accounted for *M* = 12.1% (*SD* = 12.4%) of infants' awake time. Across ages, infants spent *M* = 32.6% (*SD* = 8.2%) of their time in bouts lasting 1-5 min and *M* = 27.4% (*SD* = 14.2%) of their time in bouts lasting 5-25 minutes. Thus, the highly skewed distribution of bout durations meant that infants' days were composed of prolonged periods of time in a single position and periods of time with frequent switching between positions of short durations—a mix of massed and spaced motor practice.
+
+```{r fig-stacked}
+#| fig-cap: Stacked bar graphs showing (A) the percentage of bouts that belonged to each bout duration range, and (B) the accumulation of time spent in each bout duration range as a percentage of awake time
+#| fig-width: 7.5
+#| fig-height: 5.5
+#| apa-note: The left bar in each panel summarizes the data overall across ages, whereas the other two bars plot younger and older infants separately. 
+
+ds_bout <- ds_bout %>% 
+  mutate(duration_bins = case_when(
+    duration_min <= 1 ~ "Short",
+    duration_min > 1 & duration_min <= 5 ~ "Medium",
+    duration_min > 5 & duration_min <= 25 ~ "Long",
+    duration_min > 25 ~ "Very Long")
+  )
+
+temp_id_info <- ds_bout %>% 
+  group_by(id, age_group, agemo, age, session, unique_id, tripod, walker) %>% 
+  slice_head(n = 1) %>% select(id:unique_id)
+ds_bout_bin <- ds_bout %>% 
+  mutate(duration_total = sum(duration_min), .by = unique_id) %>% 
+  group_by(unique_id, duration_bins, duration_total) %>% 
+  summarize(n = n(), duration_by_bin = sum(duration_min)) %>% ungroup %>% 
+  mutate(duration_prop = duration_by_bin/duration_total * 100)
+ds_bout_bin <- ds_bout_bin %>% complete(unique_id, duration_bins, fill = list(n = 0, duration_prop = 0))
+ds_bout_bin <- ds_bout_bin %>% left_join(temp_id_info) %>% mutate(duration_bins_label = factor(duration_bins, levels = c("Short","Medium","Long","Very Long"), labels = c("< 1 min","1-5 min","5-25 min", "> 25 min")))
+
+ds_bout_bin <- ds_bout_bin %>% group_by(unique_id) %>% mutate(total_n = sum(n)) %>% ungroup
+ds_bout_bin$bin_prop <- ds_bout_bin$n/ds_bout_bin$total_n * 100
+
+
+# p3 <- ggplot(filter(ds_bout_bin, age_group == "Younger"), 
+#              aes(x = tripod, y = duration_prop, fill = duration_bins_label)) + 
+#   stat_summary(geom = "bar", position = "stack") + coord_cartesian(ylim = c(0,1))+
+#   scale_fill_brewer(palette = "Set2", name = "Bout Duration") +
+#   ylab("Proportion of awake time") + xlab("Younger Infants")
+# 
+# p4 <- ggplot(filter(ds_bout_bin, age_group == "Older"), 
+#              aes(x = walker, y = duration_prop, fill = duration_bins_label)) + 
+#   stat_summary(geom = "bar", position = "stack") + coord_cartesian(ylim = c(0,1))+
+#   scale_fill_brewer(palette = "Set2", name = "Bout Duration") +
+#   ylab("Proportion of awake time") + xlab("Older Infants")
+
+p1 <- ggplot(ds_bout_bin, aes(x = 1, y = bin_prop, fill = duration_bins_label)) + 
+  stat_summary(geom = "bar", position = "stack") + coord_cartesian(ylim = c(0,100)) +
+  scale_fill_brewer(palette = "Set2", name = "Bout Duration") +
+  ylab("Percentage of bouts") + 
+  scale_x_continuous(name = "", breaks = 1, labels = "Overall") +
+  ggtitle("A. Percentage of bouts")
+
+p2 <- ggplot(ds_bout_bin, aes(x = age_group, y = bin_prop, fill = duration_bins_label)) + 
+  stat_summary(geom = "bar", position = "stack") + coord_cartesian(ylim = c(0,100))+
+  scale_fill_brewer(palette = "Set2", name = "Bout Duration") +
+  ylab("") + xlab("")
+
+p3 <- ggplot(ds_bout_bin, aes(x = 1, y = duration_prop, fill = duration_bins_label)) + 
+  stat_summary(geom = "bar", position = "stack") + coord_cartesian(ylim = c(0,100)) +
+  scale_fill_brewer(palette = "Set2", name = "Bout Duration") +
+  ylab("Percentage of awake time") + 
+  scale_x_continuous(name = "", breaks = 1, labels = "Overall") +
+  ggtitle("B. Percentage of awake time")
+
+p4 <- ggplot(ds_bout_bin, aes(x = age_group, y = duration_prop, fill = duration_bins_label)) + 
+  stat_summary(geom = "bar", position = "stack") + coord_cartesian(ylim = c(0,100))+
+  scale_fill_brewer(palette = "Set2", name = "Bout Duration") +
+  ylab("") + xlab("")
+
+p1 + p2 + p3 + p4+ plot_layout(guides='collect', axes = 'collect',nrow = 1, widths = c(1,2,1,2)) &
+  theme(legend.position='bottom')
+```
+
+### Age differences in position bout duration
+
+```{r tbl-bouts-age}
+#| apa-note: Age group served as a categorical predictor with "Younger infants" as the reference category. 
+#| tbl-cap: Linear mixed-effects models predicting distribution of bout durations according to age group as a percentage of bouts (left) or a percentage of awake time (right). 
+
+# For text
+# ds_bout_bin %>% group_by(duration_bins_label) %>% get_summary_stats(duration_prop)
+# ds_bout_bin %>% group_by(duration_bins_label) %>% get_summary_stats(bin_prop)
+
+dvs_prop <- c("< 1 min","1-5 min","5-25 min", "> 25 min")
+prop_model_cohort <- function(p) { 
+  temp_ds <- ds_bout_bin %>% mutate(duration_bins_label = as.character(duration_bins_label))
+  temp_ds <- filter(ds_bout_bin, duration_bins_label == p) %>% drop_na(duration_bins_label)
+  res <- lmer(bin_prop ~ age_group + (1 |id), data = temp_ds)
+}
+
+res_bout_Cohort <- map(dvs_prop, prop_model_cohort) %>% set_names(dvs_prop)
+betas <- map_dfr(res_bout_Cohort, ~standardize_parameters(.x, method = "refit"))
+res_bout_Cohort <- map(res_bout_Cohort, ~summary(.x)$coefficients, digits = 3) 
+res_bout_Cohort <- res_bout_Cohort %>% map2_dfr(dvs_prop, ~ mutate(as.data.frame(.x), `Bout Duration` = .y))
+
+res_bout_Cohort <- res_bout_Cohort %>% 
+  add_column(beta = betas$Std_Coefficient) %>% 
+  relocate("beta", .after = "Estimate") %>% 
+  relocate("Bout Duration", .before = "Estimate") %>% 
+  rename(p = `Pr(>|t|)`, SE = `Std. Error`, t = `t value`) %>% 
+  mutate(p = ifelse(p < .001,"<.001",round(p,3)),
+         p = str_remove(p, "^0")) %>% 
+  add_column(Term = rep(c("Intercept","Age Group"), 4), .before = "Estimate") %>% 
+  select(-SE, -df) 
+  
+duration_model_cohort <- function(p) { 
+  temp_ds <- ds_bout_bin %>% mutate(duration_bins_label = as.character(duration_bins_label))
+  temp_ds <- filter(ds_bout_bin, duration_bins_label == p) %>% drop_na(duration_bins_label)
+  res <- lmer(duration_prop ~ age_group + (1 |id), data = temp_ds)
+}
+
+res_bout_time_Cohort <- map(dvs_prop, duration_model_cohort) %>% set_names(dvs_prop)
+betas <- map_dfr(res_bout_time_Cohort, ~standardize_parameters(.x, method = "refit"))
+res_bout_time_Cohort <- map(res_bout_time_Cohort, ~summary(.x)$coefficients, digits = 3) 
+res_bout_time_Cohort <- res_bout_time_Cohort %>% map2_dfr(dvs_prop, ~ mutate(as.data.frame(.x), `Bout Duration` = .y))
+
+res_bout_time_Cohort <- res_bout_time_Cohort %>% 
+  relocate("Bout Duration", .before = "Estimate") %>% 
+  add_column(beta = betas$Std_Coefficient) %>% 
+  relocate("beta", .after = "Estimate") %>%
+  rename(p_time = `Pr(>|t|)`, SE = `Std. Error`, t_time = `t value`, Estimate_time = Estimate, Beta_time = beta) %>% 
+  mutate(p_time = ifelse(p_time < .001,"<.001",round(p_time,3)),
+         p_time = str_remove(p_time, "^0")) %>% 
+  add_column(Term = rep(c("Intercept","Age Group"), 4), .before = "Estimate_time") %>% 
+  select(-SE, -df, -`Bout Duration`, -Term)
+
+bind_cols(res_bout_Cohort, res_bout_time_Cohort) %>% 
+  flextable() %>% flextable::theme_apa() %>% line_spacing(part = "all") %>% 
+  set_header_labels(p_time = "p", t_time = "t", Estimate_time = "Coef.", Estimate = "Coef.", beta = "Std. Coef.", Beta_time = "Std. Coef.") %>% 
+  merge_v(j = "Bout Duration") %>% fix_border_issues() %>% 
+  hline(i = seq(2,8,2)) %>% 
+  padding(padding.top = 2, padding.bottom = 2) %>% 
+  set_table_properties(layout = "autofit", width = .99) %>% 
+  align(align = "center", part = "all") %>% 
+  add_header_row(values = c("", "Percentage of Bouts", "Percentage of Awake Time"), colwidths = c(2,4,4))
+```
+
+```{r fig-bout-prop}
+#| fig-cap: Percentage of bouts in each duration range according to age group and motor skill 
+#| fig-width: 7.5 
+#| fig-height: 6.5 
+#| apa-note: Each point shows the percentage of bouts spent in a duration for one session. Younger infants (4-7 months) are plotted separately for non-sitters (light blue) compared to sitters (dark blue) and older infants (11-14 months) are plotted separately for non-walkers (orange) versus walkers (brown). 
+
+anno <- tibble(
+  x = c(1.5, 2, 1.5, 2, 1.5, 1.5),
+  y = c(93, 97, 26, 23,10,5),
+  duration_bins = c("Short","Short","Medium","Medium","Long","Very Long")
+) %>% 
+  mutate(duration_bins_label = factor(duration_bins, levels = c("Short","Medium","Long","Very Long"), labels = c("< 1 min","1-5 min","5-25 min", "> 25 min")))
+
+ggplot() +
+  geom_point(aes(x = age_group, y = bin_prop, color = tripod), position = position_dodge(.75), size = 3, shape = 21, alpha = .75, data = filter(ds_bout_bin, age < 10)) + 
+  geom_point(aes(x = age_group, y = bin_prop, color = walker), position = position_dodge(.75), shape = 21,  size = 3, alpha = .75, data = filter(ds_bout_bin, age > 10)) +
+  stat_summary(aes(x = age_group, y = bin_prop, color = tripod), fun = "mean",position = position_dodge(.75), size = 1.75, shape = "—", data = filter(ds_bout_bin, age < 10), show.legend = FALSE) + 
+  stat_summary(aes(x = age_group, y = bin_prop, color = walker), fun = "mean",position = position_dodge(.75), size = 1.75, shape = "—", data = filter(ds_bout_bin, age > 10), show.legend = FALSE) +
+  scale_color_manual(name = "", values = c("lightblue","darkblue","orange","brown")) + 
+  facet_wrap(~duration_bins_label, nrow = 1) + 
+  xlab("") + geom_text(data = anno, aes(x = x, y = y), label = "*", size = 8, show.legend = FALSE) +
+  scale_y_continuous(name = "Percentage of bouts", breaks = seq(0, 100, 25), limits = c(0,100)) + theme(legend.position = "bottom") 
+
+# p2 <- ggplot() +
+#   geom_point(aes(x = age_group, y = duration_prop, color = tripod), position = position_dodge(.75), size = 3, shape = 21, alpha = .75, data = filter(ds_bout_bin, age < 10)) + 
+#   geom_point(aes(x = age_group, y = duration_prop, color = walker), position = position_dodge(.75), shape = 21,  size = 3, alpha = .75, data = filter(ds_bout_bin, age > 10)) +
+#   stat_summary(aes(x = age_group, y = duration_prop, color = tripod), fun = "mean",position = position_dodge(.75), size = 1.75, shape = "—", data = filter(ds_bout_bin, age < 10), show.legend = FALSE) + 
+#   stat_summary(aes(x = age_group, y = duration_prop, color = walker), fun = "mean",position = position_dodge(.75), size = 1.75, shape = "—", data = filter(ds_bout_bin, age > 10), show.legend = FALSE) +
+#   scale_color_manual(name = "", values = c("lightblue","darkblue","orange","brown")) + 
+#   facet_wrap(~duration_bins_label, nrow = 1) + 
+#   xlab("") +
+#   scale_y_continuous(name = "Proportion of bouts", breaks = seq(0, 1, .25), limits = c(0,1)) + theme(legend.position = "bottom") 
+# 
+# p1/p2 + plot_layout(guides='collect', nrow = 2) &
+#   theme(legend.position='bottom')
+
+```
+
+```{r bout-descriptives}
+#| include: false
+
+bout_younger <- ds_bout_bin %>% filter(age_group == "Younger") %>% group_by(id, session, duration_bins) %>% summarize(prop_bout = mean(bin_prop), prop_duration = mean(duration_prop)) %>% group_by(duration_bins) %>%
+  summarize(mean_count = mean(prop_bout), sd_count = sd(prop_bout), mean_time = mean(prop_duration), sd_time = sd(prop_duration)) %>% mutate(across(mean_count:sd_time, ~ apa_num(.x))) %>% column_to_rownames(var = "duration_bins")
+
+bout_older <- ds_bout_bin %>% filter(age_group == "Older") %>% group_by(id, session, duration_bins) %>% summarize(prop_bout = mean(bin_prop), prop_duration = mean(duration_prop)) %>% group_by(duration_bins) %>%
+  summarize(mean_count = mean(prop_bout), sd_count = sd(prop_bout), mean_time = mean(prop_duration), sd_time = sd(prop_duration)) %>% mutate(across(mean_count:sd_time, ~ apa_num(.x))) %>% column_to_rownames(var = "duration_bins")
+
+bout_younger_skill <- ds_bout_bin %>% filter(age_group == "Younger") %>% group_by(id, session, duration_bins, tripod) %>% summarize(prop_bout = mean(bin_prop), prop_duration = mean(duration_prop)) %>% group_by(tripod, duration_bins) %>%
+  summarize(mean_count = mean(prop_bout), sd_count = sd(prop_bout), mean_time = mean(prop_duration), sd_time = sd(prop_duration)) %>% mutate(r = str_glue("{tripod}_{duration_bins}"), across(mean_count:sd_time, ~ apa_num(.x))) %>% column_to_rownames(var = "r")
+
+bout_older_skill <- ds_bout_bin %>% filter(age_group == "Older") %>% group_by(id, session, duration_bins, walker) %>% summarize(prop_bout = mean(bin_prop), prop_duration = mean(duration_prop)) %>% group_by(walker, duration_bins) %>%
+  summarize(mean_count = mean(prop_bout), sd_count = sd(prop_bout), mean_time = mean(prop_duration), sd_time = sd(prop_duration)) %>% mutate(r = str_glue("{walker}_{duration_bins}"), across(mean_count:sd_time, ~ apa_num(.x))) %>% column_to_rownames(var = "r")
+```
+
+Next, we tested whether the temporal distribution of bouts differed according to infants' age by comparing the younger and older groups. We hypothesized that younger infants would experience longer position bouts, which would indicate that younger infants spend long periods of time in a single position whereas older infants switch between positions more frequently (indicated by shorter bouts). Indeed, @fig-bout-distributions C and @fig-stacked show that distributions of bout length varied according to age group. The blue (younger infants) and orange (older infants) curves in @fig-bout-distributions C show the relative shape of the distributions for each age group (density plots are used rather than histograms to normalize for different amounts of data in each age group). Older infants had greater density of short bouts (\< 1 min), whereas younger infants had greater density for bout duration ranges greater than 1 min. Because of the extreme skew in the bout distributions, it would not be appropriate to compare the mean bout duration between the two groups. Following @HerzbergFletcher2022, we calculated the percentage of bouts that fell into different ranges (\< 1 min, 1-5 min, 5-25 min, \> 25 min) as a way of characterizing differences in bout duration distributions.
+
+@fig-stacked A summarizes age differences in bout durations, which were confirmed by a series of linear-mixed effect models (@tbl-bouts-age) predicting the percentage of bouts in each duration range from fixed effects of age group (with younger infant as the reference category) with random intercepts by participant. For each bout duration range (e.g., \< 1 min, 1-5 min, 5-25 min, \> 25 min), the percentage of bouts significantly differed between younger and older infants. A significantly smaller share of younger infants' bouts were \< 1 min (*M* = `r bout_younger['Short','mean_count']`%, *SD* = `r bout_younger['Short','sd_count']`), whereas fewer of older infants' bouts were \< 1 min in duration (*M* = `r bout_older['Short','mean_count']`%, *SD* = `r bout_older['Short','sd_count']`). For bout duration ranges \> 1 min, the reverse effect was found: Older infants had significantly more bouts of 1-5 min (*M* = `r bout_older['Medium','mean_count']`%, *SD* = `r bout_older['Medium','sd_count']`), 5-25 min (*M* = `r bout_older['Long','mean_count']`%, *SD* = `r bout_older['Long','sd_count']`), and greater than 25 min (*M* = `r bout_older['Very Long','mean_count']`%, *SD* = `r bout_older['Very Long','sd_count']`) compared to younger infants (1-5 min: *M* = `r bout_younger['Medium','mean_count']`%, *SD* = `r bout_younger['Medium','sd_count']`; 5-25 min: *M* = `r bout_younger['Long','mean_count']`%, *SD* = `r bout_younger['Long','sd_count']`; \> 25 min (*M* = `r bout_younger['Very Long','mean_count']`%, *SD* = `r bout_older['Very Long','sd_count']`).
+
+Younger versus older infants' days differed in the accumulated time spent in bouts of varying lengths (@fig-stacked B). @tbl-bouts-age shows results of linear mixed effect models predicting the percentage of awake time spent in each bout duration range from fixed effects of age group (with younger infant as the reference category) with random intercepts by participant. Significant age effects were found for bouts \< 1 min, 1-5 min, and 5-25 min but not for bouts \> 25 min. Younger infants spent significantly less of their awake time in bouts \< 1 min (*M* = `r bout_younger['Short','mean_time']`%, *SD* = `r bout_younger['Short','sd_time']`) and 1-5 min (*M* = `r bout_younger['Medium','mean_time']`%, *SD* = `r bout_younger['Medium','sd_time']`) compared to older infants (\< 1 min: *M* = `r bout_older['Short','mean_time']`%, *SD* = `r bout_older['Short','sd_time']`; 1-5 min: *M* = `r bout_older['Medium','mean_time']`%, *SD* = `r bout_older['Medium','sd_time']`). In contrast, younger infants spent significantly more of their awake time in bouts lasting 5-25 min (*M* = `r bout_younger['Long','mean_time']`%, *SD* = `r bout_younger['Long','sd_time']`) compared with older infants (*M* = `r bout_older['Long','mean_time']`%, *SD* = `r bout_older['Long','sd_time']`). Bouts \> 25 min did not significantly differ according to age group.
+
+### Walking but not sitting skill predicted differences in bout structure
+
+```{r tbl-boutskill}
+#| tbl-cap: Linear mixed-effects models predicting the percentage of bouts in each duration range from age in months and motor skill within each age group  
+#| ft.align: left 
+#| apa-note: Age in months served as a continuous predictor and was centered within each age group. Skill was a categorical predictor with non-sitters/non-walkers serving as the reference categories. 
+
+prop_model_age_skill <- function(p, a) { 
+  temp_ds <- ds_bout_bin %>% mutate(duration_bins_label = as.character(duration_bins_label))
+  if (a == "Younger") {
+    temp_ds <- filter(temp_ds, duration_bins_label == p, age_group == a) %>% drop_na(duration_bins_label, tripod)
+    temp_ds$age_centered <- scale(temp_ds$age, scale = F)
+    res <- lmer(bin_prop ~ age_centered+tripod + (1 |id), data = temp_ds)
+  } else {
+    temp_ds <- filter(temp_ds, duration_bins_label == p, age_group == a) %>% drop_na(duration_bins_label, walker)
+    temp_ds$age_centered <- scale(temp_ds$age, scale = F)
+    res <- lmer(bin_prop ~ age_centered+walker + (1 |id), data = temp_ds)
+  }
+}
+
+res_bout_Younger <- map(dvs_prop, ~prop_model_age_skill(p = .x, a = "Younger")) %>% set_names(dvs_prop)
+betas <- map_dfr(res_bout_Younger, ~standardize_parameters(.x, method = "refit"))
+res_bout_Younger <- map(res_bout_Younger, ~summary(.x)$coefficients, digits = 3) 
+res_bout_Younger <- res_bout_Younger %>% map2_dfr(dvs_prop, ~ mutate(as.data.frame(.x), `Bout Duration` = .y)) %>% 
+  add_column(beta = betas$Std_Coefficient) %>% 
+  relocate("beta", .after = "Estimate") %>%
+  relocate("Bout Duration", .before = "Estimate") %>% 
+  rename(p = `Pr(>|t|)`, SE = `Std. Error`, t = `t value`) %>% 
+  mutate(p = ifelse(p < .001,"<.001",round(p,3)),
+         p = str_remove(p, "^0")) %>% 
+  add_column(Term_younger = rep(c("Intercept","Age","Sitter"), 4), .before = "Estimate") %>% 
+  select(-SE, -df)
+
+res_bout_Older <- map(dvs_prop, ~prop_model_age_skill(p = .x, a = "Older")) %>% set_names(dvs_prop)
+betas <- map_dfr(res_bout_Older, ~standardize_parameters(.x, method = "refit"))
+res_bout_Older <- map(res_bout_Older, ~summary(.x)$coefficients, digits = 3) 
+res_bout_Older <- res_bout_Older %>% map2_dfr(dvs_prop, ~ mutate(as.data.frame(.x), `Bout Duration` = .y)) %>% 
+  relocate("Bout Duration", .before = "Estimate") %>% 
+  add_column(beta = betas$Std_Coefficient) %>% 
+  relocate("beta", .after = "Estimate") %>%
+  rename(P_Older = `Pr(>|t|)`, SE = `Std. Error`, "Estimate_Older" = "Estimate", "Beta_older" = beta,
+         df_Older = "df", t_Older = `t value`) %>% 
+  mutate(P_Older = ifelse(P_Older < .001,"<.001",round(P_Older,3)),
+         P_Older = str_remove(P_Older, "^0")) %>% 
+  add_column(Term_older = rep(c("Intercept","Age","Walker"), 4), .before = "Estimate_Older") %>%
+  select(-SE, -`Bout Duration`, -df_Older)
+
+bind_cols(res_bout_Younger, res_bout_Older) %>% 
+  flextable() %>% flextable::theme_apa() %>% line_spacing(part = "all") %>% 
+  set_header_labels(P_Older = "p", df_Older = "df", t_Older = "t", Estimate_Older = "Coef.", Estimate = "Coef.", beta = "Std. Coef.", Beta_older = "Std. Coef.",
+                    Term_older = "Term", Term_younger = "Term") %>% 
+  merge_v(j = "Bout Duration") %>% fix_border_issues() %>% 
+  hline(i = seq(3,12,3)) %>% 
+  padding(padding.top = 2, padding.bottom = 2) %>% 
+  set_table_properties(layout = "autofit", width = .99) %>% 
+  align(align = "center", part = "all") %>% 
+  add_header_row(values = c("", "Younger Infants", "Older Infants"), colwidths = c(1,5,5))
+```
+
+In the last set of analyses, we tested whether bout duration distributions differed within each age group according to sitting skill (among younger infants) and walking skill (among older infants) while controlling for age. @fig-bout-prop shows the percentage of bouts in each duration range (\< 1 min, 1-5 min, 5-25 min, \> 25 min) summarized by skill within each age group. A series of linear mixed effect models (@tbl-boutskill) predicted the percentage of bouts in each duration range from infants' age (centered) and their skill group (non-sitter vs. sitter, non-walker vs. walker) with random intercepts of participant. Preliminary models did not justify the inclusion of skill by age interactions or complex random effects structure. No significant differences were found within younger infants according to age or sitting skill.
+
+In contrast, walking skill predicted differences in bout durations while controlling for age among older infants. Walking infants had a significantly smaller share of bouts less than 1 min (*M* = `r bout_older_skill['Walker_Short','mean_count']`%, *SD* = `r bout_older_skill['Walker_Short','sd_count']`) compared with non-walkers (*M* = `r bout_older_skill['Non-Walker_Short','mean_count']`%, *SD* = `r bout_older_skill['Non-Walker_Short','sd_count']`), but the reverse was true for bouts 1-5 min: *M* = `r bout_older_skill['Walker_Medium','mean_count']`% (*SD* = `r bout_older_skill['Walker_Medium','sd_count']`) of walker's bouts lasted 1-5 min compared to *M* = `r bout_older_skill['Non-Walker_Medium','mean_count']`% (*SD* = `r bout_older_skill['Non-Walker_Medium','sd_count']`) for non-walkers. Age effects were non-significant in both the \< 1 min and 1-5 min models. For bouts lasting 5-25 min and \> 25 min, neither age nor walking skill were significant predictors.
+
+# Discussion
+
+The current study analyzed real-time, continuous recordings of infant body position in daily life to uncover the natural statistics of infant motor experiences. We found that the frequency of different body positions related both to infants' age and motor skill, replicating and extending past research. Compared with older infants, younger infants spent less time upright and sitting but spent more time supine, replicating past survey-based research [@Franchak2019aa]. Motor skill differences also partially replicated past observational and survey research [@FranchakKretch2018; @FranchakKadooka2024] in that walking infants spent more time upright and less time prone than non-walkers while controlling for age. Importantly, these effects were replicated for the first time in data that spanned hours of behavior across the daily routine. However, in contrast to previous work [@Franchak2019aa; @KretchLuna2025], we did not find that sitters spent more time sitting. Instead, sitters spent more time upright and prone and less time supine compared with non-sitters.
+
+Three potential reasons might account for why we did not replicate the effect of sitting skill on sitting frequency. First, the current study might have lacked sufficient power to find a significant effect; sitters did spend more time sitting than non-sitters, but large within-group variability meant that the difference was not statistically significant in the subgroup tested. Second, the current study included a wider range of behavior in the definition of the sitting category compared to prior work. We defined sitting as sitting on any surface regardless of support with a trunk angle equal to or greater than 45º, which included supported sitting in devices and on a caregiver's lap. In contrast, @Franchak2019aa counted sitting in a caregiver's lap as "held" and had a separate reclined category for trunk angles of 45º; @KretchLuna2025 only included unsupported sitting in their analysis. Thus, the discrepancy might arise from using a different sitting definition. Finally, the present study may differ from past work because it continuously sampled behavior across a day rather than using sparse survey samples to estimate frequency.
+
+Although the correlational design of the study prevents making strong conclusions to directly link motor skill acquisition to changes in motor experiences, the present data suggest that sitting and walking skill development likely play a role. The longitudinal design for each separate age group allowed us to disentangle effects of motor skill from age. Before learning to sit, infants spent most of their time supine; after learning to sit, supine became less frequent as infants spent more of their time sitting, upright, and prone (possibly as they were given more unrestrained time on the floor). After learning to walk, the upright position took an even larger share of infants' experiences, and time spent prone and sitting declined.
+
+The current study is novel in testing the natural statistics of everyday body position experiences beyond frequency. Like @HerzbergFletcher2022, we analyzed the length of bouts and found a highly-skewed distribution such that shorter bouts account for a disproportionately large share, but extremely long bouts, although rare, do occur. Indeed, across the entire sample there were 13 position bouts lasting longer than an hour, meaning that they would have been impossible to detect in a typical hour-long observational study. Although long bouts were infrequent in number, they still accounted for 12.1% of infants' total awake time (@fig-bout-prop B). Thus, we extend @HerzbergFletcher2022 's findings about manual behavior to body position to indicate that infants experience both massed and time-distributed practice in different body positions during natural behavior. As the individual exemplar timelines in @fig-timelines illustrate, some periods of the day contain a string of switches between short position bouts, whereas other periods of the day are spent in longer position bouts.
+
+We found that younger infants had more longer bouts (\> 1 minute) than older infants, whereas a large proportion of older infants' bouts were shorter than 1 minute. Changes in bout duration distributions might relate to motor skill development. Past laboratory work found greater position switching in crawlers compared with non-crawlers [@ThurmanCorbetta2017], and we found that bout position durations differed between walkers compared with non-walkers while controlling for age. Non-walkers had a greater share of \< 1 min bouts compared with walkers, whereas walkers had a greater share of 1-5 min bouts compared with non-walkers. This lengthening of position bouts may reflect increasing stability in an upright position. Prior laboratory work shows that crawling infants frequently switch between prone and sitting [@SoskaRobinson2015], perhaps because prone allows infants to crawl but sitting allows them to see their surroundings and manipulate objects. In contrast, upright walking allows infants to simultaneously locomote, manually explore objects, and see their surroundings [@HeimanCole2019; @KretchFranchak2014]. Thus, walking infants with sufficient skill may incur longer upright bouts, mixing standing still and walking, because they do not need to switch positions to accomplish their goals.
+
+Age differences in bout distributions may relate to infants' burgeoning ability to switch between positions, but may also relate to changes in everyday placement, which depends on caregivers. Infants who are restrained in high chairs and other seating devices cannot switch positions [@KarasikKuchirko2022; @MalachowskiSalo2023; @FranchakKadooka2024]. Thus, age differences in the occurrence of longer duration bouts might be dependent on caregivers' changing decisions about restraining infants versus allowing them to play unrestrained on the floor [@FranchakFordOther]. The role of caregivers, and in particular their choices to restrain infants, may also explain how a single position bout could last longer than 25 minutes. As @fig-timelines shows, many of infants' longer position bouts were spent sitting, which could have meant that they were restrained in a highchair or other seat. The long bout of upright at 2 pm for the 7-mo-old non-sitter might have occurred while restrained in a standing position in an exersaucer. Future research that identifies not only body position but whether infants are restrained versus unrestrained can shed light on the relation between device use and the temporal structure of body positions.
+
+Changes in the temporal structure of position bouts according to age and walking ability have important implications for changes in perceptual-motor exploration. Upright, sitting, prone, and supine positions provide different opportunities for learning because positions facilitate, constrain, elicit, or otherwise shape infants' experiences with visual, auditory, and haptic stimuli [@SoskaAdolph2010; @SoskaAdolph2014; @KretchFranchak2014; @FranchakKretch2018; @LuoFranchak2020; @KarasikAdolph2012; @WestFletcher2022; @WestSaleh2023; @MalachowskiSalo2023; @KretchMarcinowski2025; @RouseyTangOther]. The overall trend that older infants experience fewer long position bouts suggests that development increasingly involves switches between positions that provide a blend of exploratory experiences. Switching between positions can provide the advantages of each, such as crawling to retrieve an object and sitting down to better explore it with both hands. In other words, the observed changes in the temporal structure of positions may foster exposure to desirable variability in developmentally-relevant exploratory experiences in daily life.
+
+In sum, the current study revealed the natural statistics of motor experiences beyond frequency. It should come as no surprise that a real day in the life contains a complex mix of activities and cannot be summarized by a single statistic, such as the frequency. Rather, we find infants' days contain a blend of periods dominated by a single position and periods with a variety of positions. Future work is needed to better understand the proximal factors that lead to differences in bout structure, such as infants' decisions to switch positions and caregivers' decisions to restrain infants. Moreover, future work can seek to measure how infants' perceptual-motor exploration differs according to lengths of position bouts. As techniques become increasingly available to capture continuous, high-resolution time series data across the entire day [@FranchakTang2024; @FranchakScott2021; @AiraksinenRasanen2020], researchers will be able to quantify the natural statistics of movement to ask how they relate to the temporal structure of other experiences [@MendozaFausey2022; @CychoszRomeo2025; @ClerkinHart2017; @AbneyFausey2025] and subsequent learning and development.
