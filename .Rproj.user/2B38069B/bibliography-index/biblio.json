@@ -1,30 +1,114 @@
 {
     "sources": [
         {
-            "DOI": "10.1093/comjnl/27.2.97",
-            "ISSN": "0010-4620",
-            "URL": "https://doi.org/10.1093/comjnl/27.2.97",
             "author": [
                 {
-                    "family": "Knuth",
-                    "given": "Donald E."
+                    "family": "West",
+                    "given": "Kelsey L"
+                },
+                {
+                    "family": "Saleh",
+                    "given": "Annissa N"
+                },
+                {
+                    "family": "Adolph",
+                    "given": "Karen E"
+                },
+                {
+                    "family": "Tamis-LeMonda",
+                    "given": "Catherine S"
                 }
             ],
-            "container-title": "Comput. J.",
-            "id": "knuth84",
+            "container-title": "Developmental science",
+            "id": "WestSaleh2023",
+            "issued": {
+                "date-parts": [
+                    [
+                        2023
+                    ]
+                ]
+            },
+            "page": "e13397",
+            "title": "“Go, go, go!” Mothers’ verbs align with infants’ locomotion",
+            "type": "article-journal"
+        },
+        {
+            "author": [
+                {
+                    "family": "Ossmy",
+                    "given": "Ori"
+                },
+                {
+                    "family": "Han",
+                    "given": "Danyang"
+                },
+                {
+                    "family": "MacAlpine",
+                    "given": "Patrick"
+                },
+                {
+                    "family": "Hoch",
+                    "given": "Justine"
+                },
+                {
+                    "family": "Stone",
+                    "given": "Peter"
+                },
+                {
+                    "family": "Adolph",
+                    "given": "Karen E"
+                }
+            ],
+            "container-title": "Developmental science",
+            "id": "OssmyHan2024",
             "issue": "2",
             "issued": {
                 "date-parts": [
                     [
-                        1984,
-                        5
+                        2024
                     ]
                 ]
             },
-            "page": "97-111",
-            "publisher": "Oxford University Press, Inc.",
-            "publisher-place": "USA",
-            "title": "Literate programming",
+            "page": "e13449",
+            "publisher": "Wiley",
+            "title": "Walking and falling: Using robot simulations to model the role of errors in infant walking",
+            "title-short": "Walking and falling",
+            "type": "article-journal",
+            "volume": "27"
+        },
+        {
+            "author": [
+                {
+                    "family": "Borjon",
+                    "given": "Jeremy I"
+                },
+                {
+                    "family": "Abney",
+                    "given": "Drew H"
+                },
+                {
+                    "family": "Yu",
+                    "given": "Chen"
+                },
+                {
+                    "family": "Smith",
+                    "given": "Linda B"
+                }
+            ],
+            "container-title": "Developmental science",
+            "id": "BorjonAbney2024aa",
+            "issue": "4",
+            "issued": {
+                "date-parts": [
+                    [
+                        2024,
+                        7
+                    ]
+                ]
+            },
+            "page": "e13491",
+            "publisher": "Wiley",
+            "title": "Infant vocal productions coincide with body movements",
             "type": "article-journal",
             "volume": "27"
         }
